@@ -133,14 +133,14 @@ def set_bot_commands():
     """设置 Telegram 内置命令菜单"""
     url = f"{API_URL}/setMyCommands"
     commands = [
-        {"command": "status", "description": "查看服务器状态"},
-        {"command": "renew", "description": "强制续签证书"},
-        {"command": "sub", "description": "获取订阅链接"},
-        {"command": "restart", "description": "重启Singbox"},
-        {"command": "cdn", "description": "更新CDN IP"},
-        {"command": "setai", "description": "设置AI住宅IP"},
-        {"command": "delai", "description": "删除AI住宅IP"},
-        {"command": "help", "description": "显示帮助"}
+        {"command": "状态", "description": "查看服务器运行状态（CPU/内存/服务）"},
+        {"command": "续签", "description": "强制续签 SSL 证书（15年长期）"},
+        {"command": "订阅", "description": "获取最新订阅链接（Base64/Clash）"},
+        {"command": "重启", "description": "重启 Singbox 核心服务"},
+        {"command": "优选", "description": "更新 CDN 优选 IP 地址"},
+        {"command": "设置住宅", "description": "设置 AI 住宅IP SOCKS5（链式代理）"},
+        {"command": "删除住宅", "description": "删除 AI 住宅IP，恢复普通代理"},
+        {"command": "帮助", "description": "显示所有命令详细说明"}
     ]
     data = json.dumps({'commands': commands}).encode()
     req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
@@ -197,39 +197,39 @@ def handle_message(update):
         send_message(chat_id, "❌ 无权限访问")
         return
 
-    if text == '/start' or text == '/help':
+    if text == '/start' or text == '/帮助':
         current_ai = os.getenv('AI_SOCKS5_SERVER', '')
         ai_status = f"✅ 已配置: {current_ai}" if current_ai else "❌ 未配置"
         send_message(chat_id, f"""👋 <b>欢迎使用 Singbox 服务器管理机器人</b>
 
 📖 <b>可用命令</b>（点击即可发送）：
 
-/status - 📊 查看服务器运行状态
-/renew - 🔄 强制续签 SSL 证书
-/sub - 🔗 获取最新订阅链接
-/restart - 🔁 重启 Singbox 服务
-/cdn - 🌐 更新 CDN 优选 IP
-/setai - 🏠 设置 AI 住宅IP SOCKS5
-/delai - 🗑️ 删除 AI 住宅IP SOCKS5
-/help - ❓ 显示此帮助菜单
+/状态 - 📊 查看服务器运行状态（CPU/内存/服务运行情况）
+/续签 - 🔄 强制续签 SSL 证书（Cloudflare 15年长期证书）
+/订阅 - 🔗 获取最新订阅链接（自动识别 Clash/Base64 格式）
+/重启 - 🔁 重启 Singbox 核心服务（配置更新后使用）
+/优选 - 🌐 更新 CDN 优选 IP 地址（自动从多源获取最快IP）
+/设置住宅 - 🏠 设置 AI 住宅IP SOCKS5（链式代理，AI流量走住宅IP）
+/删除住宅 - 🗑️ 删除 AI 住宅IP（恢复普通代理模式）
+/帮助 - ❓ 显示此帮助菜单
 
 🏠 <b>AI住宅IP状态</b>: {ai_status}
 
 💡 <b>提示</b>：点击命令即可执行，无需手动输入""")
-    elif text == '/status':
+    elif text == '/状态':
         send_message(chat_id, get_server_status())
-    elif text == '/renew':
+    elif text == '/续签':
         send_message(chat_id, "⏳ 正在续签证书...")
         send_message(chat_id, renew_cert())
-    elif text == '/sub':
+    elif text == '/订阅':
         send_message(chat_id, get_sub_link())
-    elif text == '/restart':
+    elif text == '/重启':
         send_message(chat_id, "⏳ 正在重启 Singbox...")
         send_message(chat_id, restart_singbox())
-    elif text == '/cdn':
+    elif text == '/优选':
         send_message(chat_id, "⏳ 正在更新 CDN IP...")
         send_message(chat_id, update_cdn())
-    elif text == '/setai':
+    elif text == '/设置住宅':
         send_message(chat_id, """🏠 <b>设置 AI 住宅IP SOCKS5</b>
 
 请按以下格式发送（一行一条）：
@@ -242,10 +242,10 @@ def handle_message(update):
 <code>myuser</code>
 <code>mypass123</code>
 
-💡 发送后，AI流量将自动走住宅IP""")
-    elif text == '/delai':
+💡 设置后，所有 AI 网站流量将自动走住宅IP，Singbox 会自动重启""")
+    elif text == '/删除住宅':
         send_message(chat_id, handle_ai_socks5('del'))
-    elif text.startswith('/setai '):
+    elif text.startswith('/设置住宅 '):
         parts = text[7:].strip().split('\n')
         if len(parts) >= 3:
             server_port = parts[0].strip().split(':')
@@ -257,7 +257,7 @@ def handle_message(update):
         else:
             send_message(chat_id, "❌ 格式错误，请发送3行信息")
     else:
-        send_message(chat_id, "❓ 未知命令，请发送 /help 查看帮助")
+        send_message(chat_id, "❓ 未知命令，请发送 /帮助 查看说明")
 
 def main():
     print(f"🤖 TG机器人启动 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
