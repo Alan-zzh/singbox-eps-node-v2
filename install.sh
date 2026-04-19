@@ -17,8 +17,17 @@ echo_yellow() { echo -e "${YELLOW}$1${NC}"; }
 
 check_root() {
     if [ "$(id -u)" != "0" ]; then
-        echo_red "[ERROR] 请使用root用户运行此脚本"
-        exit 1
+        echo_yellow "[INFO] 当前非ROOT用户，尝试自动切换..."
+        if command -v sudo &> /dev/null; then
+            echo "[INFO] 使用 sudo 切换..."
+            exec sudo bash "$0" "$@"
+        elif command -v su &> /dev/null; then
+            echo "[INFO] 使用 su 切换..."
+            su -c "bash $0 $@"
+        else
+            echo_red "[ERROR] 无法切换到ROOT用户，请使用root运行"
+            exit 1
+        fi
     fi
 }
 
@@ -61,6 +70,22 @@ generate_env_file() {
     read -p "  请输入 Cloudflare API Token (申请15年证书, 回车跳过使用自签): " CF_API_TOKEN
     CF_API_TOKEN=${CF_API_TOKEN:-""}
 
+    echo ""
+    echo_yellow ">>> 是否合并其他机场订阅？（输入订阅链接，每行一个，输入 'done' 结束，直接回车跳过）"
+    EXTERNAL_SUBS=""
+    while true; do
+        read -p "  订阅链接 (或输入 'done' 结束): " sub_line
+        if [ "$sub_line" = "done" ] || [ -z "$sub_line" ]; then
+            break
+        fi
+        if [ -z "$EXTERNAL_SUBS" ]; then
+            EXTERNAL_SUBS="$sub_line"
+        else
+            EXTERNAL_SUBS="${EXTERNAL_SUBS}|${sub_line}"
+        fi
+    done
+    EXTERNAL_SUBS=${EXTERNAL_SUBS:-""}
+
     echo "[INFO] 生成 Reality 密钥对..."
     KEYPAIR=$(generate_reality_keypair)
     REALITY_PRIVATE_KEY=$(echo "$KEYPAIR" | grep "PrivateKey:" | cut -d' ' -f2)
@@ -76,12 +101,13 @@ generate_env_file() {
     REALITY_SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
 
     cat > "$CONFIG_DIR/.env" << EOF
-# Singbox Manager 配置文件 - v1.0.10
+# Singbox Manager 配置文件 - v1.0.11
 # 自动生成，禁止手动修改
 
 SERVER_IP=$SERVER_IP
 CF_DOMAIN=$CF_DOMAIN
 CF_API_TOKEN=$CF_API_TOKEN
+EXTERNAL_SUBS=$EXTERNAL_SUBS
 
 VLESS_UUID=$VLESS_UUID
 VLESS_WS_UUID=$VLESS_WS_UUID
@@ -104,14 +130,14 @@ EOF
 show_menu() {
     clear
     echo "=============================================="
-    echo "    Singbox Manager 一键安装脚本 v1.0.8"
+    echo "    Singbox Manager 一键安装脚本 v1.0.11"
     echo "=============================================="
     echo ""
     echo "  1. 完整安装（推荐）"
     echo "  2. 仅安装 Singbox 内核"
     echo "  3. 配置 CDN 加速"
     echo "  4. 生成订阅链接"
-    echo "  5. 一键重装系统密码"
+    echo "  5. 一键重装系统（使用原密码，装完自动重启）"
     echo "  6. 退出"
     echo ""
     echo "=============================================="
@@ -415,16 +441,36 @@ full_install() {
     echo_green "=============================================="
 }
 
-reinstall_password() {
-    echo_yellow ">>> 一键重装系统密码..."
+reinstall_system() {
+    echo_yellow ">>> 一键重装系统..."
+    echo ""
+    echo_red "=============================================="
+    echo "  警告: 此操作将重装系统为 Debian 12"
+    echo "  重装后 root 密码 = 当前密码"
+    echo "  装完自动重启，请确认重要数据已备份!"
+    echo "=============================================="
+    echo ""
+    read -p "  确认重装? (输入 yes 继续): " confirm
+    if [ "$confirm" != "yes" ]; then
+        echo_green "[OK] 已取消重装"
+        return
+    fi
+
     CURRENT_PASS=$(grep -E '^root:' /etc/shadow | cut -d: -f2)
-    echo "[INFO] 当前 root 密码哈希: ${CURRENT_PASS:0:20}..."
+    echo "[INFO] 当前 root 密码哈希已获取"
+
+    echo "[INFO] 下载重装脚本..."
+    wget -O /tmp/reinstall.sh --no-check-certificate 'https://raw.githubusercontent.com/leitbogioro/Tools/master/Linux_reinstall/InstallNET.sh' 2>/dev/null || \
+    wget -O /tmp/reinstall.sh --no-check-certificate 'https://www.moerats.com/usr/shell/InstallNET.sh' 2>/dev/null || \
+    { echo_red "[ERROR] 下载重装脚本失败"; return; }
+
+    chmod +x /tmp/reinstall.sh
+
+    echo "[INFO] 开始重装系统为 Debian 12..."
+    echo "[INFO] 重装后 root 密码 = 当前系统密码"
+    echo "[INFO] 装完会自动重启..."
     echo ""
-    echo_green ">>> 密码已确认为当前系统 root 密码"
-    echo_green "[OK] 无需额外操作，系统 root 密码保持不变"
-    echo ""
-    echo_yellow "提示: 如需修改 root 密码，请使用 passwd 命令"
-    echo_green "[OK] 操作完成"
+    bash /tmp/reinstall.sh -debian 12 -pwd "$CURRENT_PASS" -auto-reboot
 }
 
 main() {
@@ -451,7 +497,8 @@ main() {
                 generate_subscription
                 ;;
             5)
-                reinstall_password
+                check_root
+                reinstall_system
                 ;;
             6)
                 echo_green "退出脚本..."

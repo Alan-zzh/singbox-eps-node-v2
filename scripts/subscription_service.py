@@ -61,6 +61,7 @@ REALITY_PUBLIC_KEY = os.getenv('REALITY_PUBLIC_KEY', '')
 REALITY_SHORT_ID = os.getenv('REALITY_SHORT_ID', 'abcd1234')
 REALITY_DEST = os.getenv('REALITY_DEST', 'www.apple.com:443')
 REALITY_SNI = os.getenv('REALITY_SNI', 'www.apple.com')
+EXTERNAL_SUBS = os.getenv('EXTERNAL_SUBS', '')
 
 HYSTERIA2_UDP_PORTS = list(range(21000, 21201))
 
@@ -205,6 +206,21 @@ def create_app():
     @app.route('/sub')
     def get_subscription():
         links = generate_all_links()
+        if EXTERNAL_SUBS:
+            for sub_url in EXTERNAL_SUBS.split('|'):
+                sub_url = sub_url.strip()
+                if sub_url:
+                    try:
+                        req = urllib.request.Request(sub_url)
+                        with urllib.request.urlopen(req, timeout=10) as resp:
+                            raw = resp.read().decode('utf-8')
+                            try:
+                                decoded = base64.b64decode(raw).decode('utf-8')
+                                links.extend(decoded.strip().split('\n'))
+                            except Exception:
+                                links.extend(raw.strip().split('\n'))
+                    except Exception as e:
+                        logger.warning(f"合并订阅失败 {sub_url}: {e}")
         content = '\n'.join(links)
         sub = base64.b64encode(content.encode('utf-8')).decode('utf-8')
         return Response(sub, mimetype='text/plain')
