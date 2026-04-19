@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Singbox Manager 一键安装脚本 v1.0.8
+# Singbox Manager 一键安装脚本 v1.0.10
 # 节点命名规则: ePS-{国家}-{协议}
 # 无硬编码，所有配置动态生成
 
@@ -58,6 +58,9 @@ generate_env_file() {
     read -p "  请输入域名（直接回车跳过，使用IP）: " CF_DOMAIN
     CF_DOMAIN=${CF_DOMAIN:-""}
 
+    read -p "  请输入 Cloudflare API Token (申请15年证书, 回车跳过使用自签): " CF_API_TOKEN
+    CF_API_TOKEN=${CF_API_TOKEN:-""}
+
     echo "[INFO] 生成 Reality 密钥对..."
     KEYPAIR=$(generate_reality_keypair)
     REALITY_PRIVATE_KEY=$(echo "$KEYPAIR" | grep "PrivateKey:" | cut -d' ' -f2)
@@ -73,11 +76,12 @@ generate_env_file() {
     REALITY_SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
 
     cat > "$CONFIG_DIR/.env" << EOF
-# Singbox Manager 配置文件 - v1.0.8
+# Singbox Manager 配置文件 - v1.0.10
 # 自动生成，禁止手动修改
 
 SERVER_IP=$SERVER_IP
 CF_DOMAIN=$CF_DOMAIN
+CF_API_TOKEN=$CF_API_TOKEN
 
 VLESS_UUID=$VLESS_UUID
 VLESS_WS_UUID=$VLESS_WS_UUID
@@ -194,12 +198,47 @@ generate_certificates() {
 
     if [ -f "$CERT_DIR/cert.crt" ] && [ -f "$CERT_DIR/cert.key" ]; then
         echo "[INFO] 证书已存在，跳过"
+        return
+    fi
+
+    source /root/singbox-manager/.env
+
+    if [ -n "$CF_API_TOKEN" ] && [ -n "$CF_DOMAIN" ]; then
+        echo "[INFO] 检测到 Cloudflare API Token，尝试申请15年证书..."
+        cd /root/singbox-manager
+        python3 -c "
+import sys
+sys.path.insert(0, 'scripts')
+from cert_manager import request_cf_ssl_certificate, generate_self_signed_cert, ensure_cert_dir
+import os
+token = os.getenv('CF_API_TOKEN', '')
+domain = os.getenv('CF_DOMAIN', '')
+if token and domain:
+    result = request_cf_ssl_certificate(domain, token)
+    if result:
+        ensure_cert_dir()
+        with open('/root/singbox-manager/cert/cert.crt', 'w') as f:
+            f.write(result['certificate'])
+        with open('/root/singbox-manager/cert/cert.key', 'w') as f:
+            f.write(result['private_key'])
+        print('[OK] Cloudflare 15年证书申请成功')
+    else:
+        print('[WARN] Cloudflare 证书申请失败，降级为自签证书')
+        generate_self_signed_cert(domain)
+else:
+    generate_self_signed_cert(domain)
+" 2>/dev/null || {
+            echo_yellow "[WARN] Cloudflare 证书申请失败，使用自签证书"
+            openssl req -x509 -nodes -newkey rsa:2048 \
+                -keyout "$CERT_DIR/cert.key" -out "$CERT_DIR/cert.crt" \
+                -days 365 -subj "/CN=${CF_DOMAIN:-$SERVER_IP}" 2>/dev/null
+        }
     else
-        source /root/singbox-manager/.env
+        echo "[INFO] 未配置 Cloudflare API，使用自签证书..."
         openssl req -x509 -nodes -newkey rsa:2048 \
             -keyout "$CERT_DIR/cert.key" -out "$CERT_DIR/cert.crt" \
             -days 365 -subj "/CN=${CF_DOMAIN:-$SERVER_IP}"
-        echo_green "[OK] 证书生成完成"
+        echo_green "[OK] 自签证书生成完成"
     fi
 }
 

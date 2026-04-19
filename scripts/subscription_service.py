@@ -25,6 +25,9 @@ import random
 from datetime import datetime
 import ssl
 
+from dotenv import load_dotenv
+load_dotenv('/root/singbox-manager/.env')
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
