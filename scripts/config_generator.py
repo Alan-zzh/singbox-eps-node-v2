@@ -80,7 +80,7 @@ config = {
             "tag": "vless-ws",
             "listen": "0.0.0.0",
             "listen_port": 8443,
-            "users": [{"id": vless_ws_uuid}],
+            "users": [{"uuid": vless_ws_uuid}],
             "transport": {
                 "type": "ws",
                 "path": "/vless-ws",
@@ -99,7 +99,7 @@ config = {
             "tag": "vless-upgrade",
             "listen": "0.0.0.0",
             "listen_port": 2053,
-            "users": [{"id": vless_ws_uuid}],
+            "users": [{"uuid": vless_ws_uuid}],
             "transport": {
                 "type": "httpupgrade",
                 "path": "/vless-upgrade",
