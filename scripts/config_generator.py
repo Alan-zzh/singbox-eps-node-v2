@@ -98,7 +98,7 @@ config = {
             "type": "vless",
             "tag": "vless-upgrade",
             "listen": "0.0.0.0",
-            "listen_port": 8445,
+            "listen_port": 2053,
             "users": [{"id": vless_ws_uuid}],
             "transport": {
                 "type": "httpupgrade",
@@ -117,7 +117,7 @@ config = {
             "type": "trojan",
             "tag": "trojan-ws",
             "listen": "0.0.0.0",
-            "listen_port": 8444,
+            "listen_port": 2083,
             "users": [{"password": trojan_pass}],
             "transport": {
                 "type": "ws",
@@ -136,7 +136,7 @@ config = {
             "type": "hysteria2",
             "tag": "hysteria2",
             "listen": "0.0.0.0",
-            "listen_port": 4433,
+            "listen_port": 443,
             "users": [{"password": hysteria2_pass}],
             "tls": {
                 "enabled": True,

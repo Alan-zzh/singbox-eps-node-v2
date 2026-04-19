@@ -54,11 +54,12 @@ CERT_DIR = os.getenv('CERT_DIR', '/root/singbox-manager/cert')
 DB_PATH = os.path.join(DATA_DIR, 'singbox.db')
 SUB_PORT = int(os.getenv('SUB_PORT', '6969'))
 SUB_TOKEN = os.getenv('SUB_TOKEN', '')
+COUNTRY_CODE = os.getenv('COUNTRY_CODE', 'JP')
 USE_DOMAIN = bool(CF_DOMAIN and CF_DOMAIN.strip() != '')
 
 VLESS_UUID = os.getenv('VLESS_UUID', '')
 VLESS_WS_UUID = os.getenv('VLESS_WS_UUID', '')
-VLESS_UPGRADE_PORT = int(os.getenv('VLESS_UPGRADE_PORT', '8445'))
+VLESS_UPGRADE_PORT = int(os.getenv('VLESS_UPGRADE_PORT', '2053'))
 TROJAN_PASSWORD = os.getenv('TROJAN_PASSWORD', '')
 HYSTERIA2_PASSWORD = os.getenv('HYSTERIA2_PASSWORD', '')
 REALITY_PUBLIC_KEY = os.getenv('REALITY_PUBLIC_KEY', '')
@@ -134,7 +135,7 @@ def generate_all_links():
         'headerType': 'none'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
-    links.append(f"vless://{VLESS_UUID}@{SERVER_IP}:443?{param_str}#ePS-JP-VLESS-Reality{cdn_suffix}")
+    links.append(f"vless://{VLESS_UUID}@{SERVER_IP}:443?{param_str}#JP-VLESS-Reality{cdn_suffix}")
 
     params = {
         'encryption': 'none',
@@ -146,7 +147,7 @@ def generate_all_links():
         'allowInsecure': '1'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
-    links.append(f"vless://{VLESS_WS_UUID}@{ws_addr}:{VLESS_WS_PORT}?{param_str}#ePS-JP-VLESS-WS{cdn_suffix}")
+    links.append(f"vless://{VLESS_WS_UUID}@{ws_addr}:{VLESS_WS_PORT}?{param_str}#JP-VLESS-WS{cdn_suffix}")
 
     params = {
         'encryption': 'none',
@@ -158,7 +159,7 @@ def generate_all_links():
         'allowInsecure': '1'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
-    links.append(f"vless://{VLESS_WS_UUID}@{ws_addr}:{VLESS_UPGRADE_PORT}?{param_str}#ePS-JP-VLESS-HTTPUpgrade{cdn_suffix}")
+    links.append(f"vless://{VLESS_WS_UUID}@{ws_addr}:{VLESS_UPGRADE_PORT}?{param_str}#JP-VLESS-HTTPUpgrade{cdn_suffix}")
 
     params = {
         'type': 'ws',
@@ -169,7 +170,7 @@ def generate_all_links():
         'allowInsecure': '1'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
-    links.append(f"trojan://{TROJAN_PASSWORD}@{ws_addr}:{TROJAN_WS_PORT}?{param_str}#ePS-JP-Trojan-WS{cdn_suffix}")
+    links.append(f"trojan://{TROJAN_PASSWORD}@{ws_addr}:{TROJAN_WS_PORT}?{param_str}#JP-Trojan-WS{cdn_suffix}")
 
     params = {
         'sni': REALITY_SNI,
@@ -180,7 +181,7 @@ def generate_all_links():
     }
     hysteria2_port = random.choice(HYSTERIA2_UDP_PORTS)
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
-    links.append(f"hysteria2://{HYSTERIA2_PASSWORD}@{SERVER_IP}:{hysteria2_port}?{param_str}#ePS-JP-Hysteria2")
+    links.append(f"hysteria2://{HYSTERIA2_PASSWORD}@{SERVER_IP}:{hysteria2_port}?{param_str}#JP-Hysteria2")
 
     return links
 
@@ -222,6 +223,7 @@ def create_app():
         """ % (server_addr, SUB_PORT, SUB_TOKEN, SERVER_IP, CF_DOMAIN if CF_DOMAIN else '未配置', '是' if USE_DOMAIN else '否')
         return Response(html, mimetype='text/html')
 
+    @app.route(f'/sub/{COUNTRY_CODE}')
     @app.route(f'/{SUB_TOKEN}')
     @app.route('/sub')
     def get_subscription():
@@ -262,7 +264,7 @@ def create_app():
         proxy_groups = []
 
         proxies.append({
-            'name': f'ePS-JP-VLESS-Reality{cdn_suffix}',
+            'name': f'JP-VLESS-Reality{cdn_suffix}',
             'type': 'vless',
             'server': SERVER_IP,
             'port': 443,
@@ -277,7 +279,7 @@ def create_app():
         })
 
         proxies.append({
-            'name': f'ePS-JP-VLESS-WS{cdn_suffix}',
+            'name': f'JP-VLESS-WS{cdn_suffix}',
             'type': 'vless',
             'server': ws_addr,
             'port': VLESS_WS_PORT,
@@ -290,7 +292,7 @@ def create_app():
         })
 
         proxies.append({
-            'name': f'ePS-JP-VLESS-HTTPUpgrade{cdn_suffix}',
+            'name': f'JP-VLESS-HTTPUpgrade{cdn_suffix}',
             'type': 'vless',
             'server': ws_addr,
             'port': VLESS_UPGRADE_PORT,
@@ -303,7 +305,7 @@ def create_app():
         })
 
         proxies.append({
-            'name': f'ePS-JP-Trojan-WS{cdn_suffix}',
+            'name': f'JP-Trojan-WS{cdn_suffix}',
             'type': 'trojan',
             'server': ws_addr,
             'port': TROJAN_WS_PORT,
@@ -314,10 +316,10 @@ def create_app():
         })
 
         proxies.append({
-            'name': 'ePS-JP-Hysteria2',
+            'name': 'JP-Hysteria2',
             'type': 'hysteria2',
             'server': SERVER_IP,
-            'port': 4433,
+            'port': 443,
             'password': HYSTERIA2_PASSWORD,
             'ports': '21000-21200',
             'obfs': {'type': 'salamander', 'password': HYSTERIA2_PASSWORD[:8]},
