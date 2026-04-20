@@ -8,11 +8,19 @@ echo "============================================================"
 echo "Singbox EPS Node 一键安装脚本"
 echo "============================================================"
 
+# 0. 时间同步（防止Reality协议失效）
+echo ""
+echo "【步骤0】配置时间同步..."
+timedatectl set-ntp yes
+systemctl enable systemd-timesyncd
+systemctl restart systemd-timesyncd
+echo "  ✅ 时间同步已配置"
+
 # 1. 安装依赖
 echo ""
 echo "【步骤1】安装系统依赖..."
 apt-get update -y
-apt-get install -y python3 python3-pip curl wget iptables
+apt-get install -y python3 python3-pip curl wget iptables iptables-persistent
 
 # 2. 安装Python依赖
 echo ""

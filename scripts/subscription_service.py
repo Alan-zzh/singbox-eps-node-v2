@@ -2,19 +2,23 @@
 """
 订阅服务 - Flask应用
 Author: Alan
-Version: v1.0.4
+Version: v1.0.31
 Date: 2026-04-20
 功能：
-  - 提供单个Base64订阅链接（包含所有节点）
+  - 提供Base64订阅链接（包含所有节点）
   - CDN优选IP自动分配（每个协议独立IP）
-  - HTTPS协议支持
+  - 纯HTTP协议（避免自签证书CN不匹配导致客户端拒绝）
 
-节点命名规则: ePS-{国家}-{协议}
-- ePS-JP-VLESS-Reality (直连节点，苹果域名伪装)
-- ePS-JP-VLESS-WS (CDN节点，独立优选IP)
-- ePS-JP-VLESS-HTTPUpgrade (CDN节点，独立优选IP)
-- ePS-JP-Trojan-WS (CDN节点，独立优选IP)
-- ePS-JP-Hysteria2 (直连节点，端口跳跃)
+订阅链接格式: http://SERVER_IP:6969/sub/{国家代码}
+示例: http://54.250.149.157:6969/sub/JP
+
+节点命名规则: {国家代码}-{协议}
+- JP-VLESS-Reality (直连节点，苹果域名伪装)
+- JP-VLESS-WS (CDN节点，独立优选IP)
+- JP-VLESS-HTTPUpgrade (CDN节点，独立优选IP)
+- JP-Trojan-WS (CDN节点，独立优选IP)
+- JP-Hysteria2 (直连节点，端口跳跃)
+- AI-SOCKS5 (外部代理节点)
 """
 
 import os
@@ -36,8 +40,7 @@ try:
         SERVER_IP, CF_DOMAIN, DATA_DIR, CERT_DIR, DB_FILE, SUB_PORT,
         VLESS_WS_PORT, VLESS_UPGRADE_PORT, TROJAN_WS_PORT, HYSTERIA2_PORT, SOCKS5_PORT,
         HYSTERIA2_UDP_PORTS, REALITY_SHORT_ID, REALITY_DEST, REALITY_SNI,
-        AI_SOCKS5_SERVER, AI_SOCKS5_PORT, AI_SOCKS5_USER, AI_SOCKS5_PASS,
-        SUB_TOKEN
+        AI_SOCKS5_SERVER, AI_SOCKS5_PORT, AI_SOCKS5_USER, AI_SOCKS5_PASS
     )
     from logger import get_logger
 except ImportError:
@@ -50,10 +53,8 @@ logger = get_logger('subscription_service')
 
 SERVER_IP = os.getenv('SERVER_IP', '')
 CF_DOMAIN = os.getenv('CF_DOMAIN', '')
-# DATA_DIR 从 config.py 统一读取，不再硬编码
 DB_PATH = DB_FILE if 'DB_FILE' in dir() else os.path.join(DATA_DIR, 'singbox.db')
 SUB_PORT = int(os.getenv('SUB_PORT', '6969'))
-SUB_TOKEN = os.getenv('SUB_TOKEN', '')
 COUNTRY_CODE = os.getenv('COUNTRY_CODE', 'JP')
 USE_DOMAIN = bool(CF_DOMAIN and CF_DOMAIN.strip() != '')
 
@@ -116,6 +117,9 @@ def generate_all_links():
     use_cdn = (vless_ws_addr != SERVER_IP)
     cdn_suffix = "-CDN" if use_cdn else ""
 
+    # CDN节点的SNI：优先使用域名，没有域名则使用服务器IP
+    cdn_sni = CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else SERVER_IP
+
     # 1. VLESS-Reality (直连)
     params = {
         'encryption': 'none',
@@ -138,9 +142,9 @@ def generate_all_links():
         'encryption': 'none',
         'type': 'ws',
         'security': 'tls',
-        'sni': CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else vless_ws_addr,
+        'sni': cdn_sni,
         'path': '/vless-ws',
-        'host': CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else vless_ws_addr,
+        'host': cdn_sni,
         'allowInsecure': '1'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
@@ -151,9 +155,9 @@ def generate_all_links():
         'encryption': 'none',
         'type': 'httpupgrade',
         'security': 'tls',
-        'sni': CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else vless_upgrade_addr,
+        'sni': cdn_sni,
         'path': '/vless-upgrade',
-        'host': CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else vless_upgrade_addr,
+        'host': cdn_sni,
         'allowInsecure': '1'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
@@ -163,15 +167,15 @@ def generate_all_links():
     params = {
         'type': 'ws',
         'security': 'tls',
-        'sni': CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else trojan_ws_addr,
+        'sni': cdn_sni,
         'path': '/trojan-ws',
-        'host': CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else trojan_ws_addr,
+        'host': cdn_sni,
         'allowInsecure': '1'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
     links.append(f"trojan://{TROJAN_PASSWORD}@{trojan_ws_addr}:{TROJAN_WS_PORT}?{param_str}#{COUNTRY_CODE}-Trojan-WS{cdn_suffix}")
 
-    # 5. Hysteria2 (直连)
+    # 5. Hysteria2 (直连) - 使用固定端口443
     params = {
         'sni': REALITY_SNI,
         'insecure': '1',
@@ -179,9 +183,8 @@ def generate_all_links():
         'obfs': 'salamander',
         'obfs-password': HYSTERIA2_PASSWORD[:8]
     }
-    hysteria2_port = random.choice(HYSTERIA2_UDP_PORTS)
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
-    links.append(f"hysteria2://{HYSTERIA2_PASSWORD}@{SERVER_IP}:{hysteria2_port}?{param_str}#{COUNTRY_CODE}-Hysteria2")
+    links.append(f"hysteria2://{HYSTERIA2_PASSWORD}@{SERVER_IP}:443?{param_str}#{COUNTRY_CODE}-Hysteria2")
 
     # 6. SOCKS5 (AI协议牵制节点)
     # 服务器: 206.163.4.241, 端口: 36753, 用户名: 4KKsLB7F, 密码: KgEKVmVgxJ
@@ -198,7 +201,6 @@ def create_app():
 
     @app.route('/')
     def home():
-        server_addr = get_sub_address()
         html = """
         <html>
         <head>
@@ -215,8 +217,8 @@ def create_app():
             <h1>Singbox 订阅服务</h1>
             <div class="sub-box">
                 <p><strong>订阅链接：</strong></p>
-                <p class="sub-link">https://%s:%s/%s</p>
-                <p class="info">（包含6个节点：ePS-%s-VLESS-Reality、ePS-%s-VLESS-WS、ePS-%s-VLESS-HTTPUpgrade、ePS-%s-Trojan-WS、ePS-%s-Hysteria2、AI-SOCKS5）</p>
+                <p class="sub-link">http://%s:%s/sub/%s</p>
+                <p class="info">（包含6个节点：%s-VLESS-Reality、%s-VLESS-WS、%s-VLESS-HTTPUpgrade、%s-Trojan-WS、%s-Hysteria2、AI-SOCKS5）</p>
             </div>
             <div class="info">
                 <p>服务器IP: %s</p>
@@ -225,11 +227,10 @@ def create_app():
             </div>
         </body>
         </html>
-        """ % (server_addr, SUB_PORT, SUB_TOKEN, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, SERVER_IP, CF_DOMAIN if CF_DOMAIN else '未配置', '是' if USE_DOMAIN else '否')
+        """ % (SERVER_IP, SUB_PORT, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, SERVER_IP, CF_DOMAIN if CF_DOMAIN else '未配置', '是' if USE_DOMAIN else '否')
         return Response(html, mimetype='text/html')
 
     @app.route(f'/sub/{COUNTRY_CODE}')
-    @app.route(f'/{SUB_TOKEN}')
     @app.route('/sub')
     def get_subscription():
         user_agent = request.headers.get('User-Agent', '').lower()
@@ -303,6 +304,8 @@ def create_app():
         except Exception as e:
             logger.warning(f"Failed to parse socks5: {e}")
             return None
+
+    def parse_vless_link(link):
         try:
             parsed = urllib.parse.urlparse(link)
             uuid = parsed.username
@@ -497,38 +500,6 @@ def create_app():
 if __name__ == '__main__':
     init_db()
     app = create_app()
-    
-    # 尝试多个可能的证书路径
-    cert_paths = [
-        os.path.join(CERT_DIR, 'cert.pem'),
-        os.path.join(os.path.dirname(CERT_DIR), 'certs', 'cert.pem'),
-        '/root/singbox-eps-node/cert/cert.pem',
-        '/root/singbox-eps-node/certs/cert.pem',
-        '/root/singbox-manager/cert/cert.pem',
-    ]
-    
-    key_paths = [
-        os.path.join(CERT_DIR, 'key.pem'),
-        os.path.join(os.path.dirname(CERT_DIR), 'certs', 'key.pem'),
-        '/root/singbox-eps-node/cert/key.pem',
-        '/root/singbox-eps-node/certs/key.pem',
-        '/root/singbox-manager/cert/key.pem',
-    ]
-    
-    cert_found = False
-    for cert_path, key_path in zip(cert_paths, key_paths):
-        if os.path.exists(cert_path) and os.path.exists(key_path):
-            logger.info(f"SSL certificate found at: {cert_path}")
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            context.load_cert_chain(cert_path, key_path)
-            logger.info(f"Starting HTTPS subscription service on 0.0.0.0:{SUB_PORT}")
-            app.run(host='0.0.0.0', port=SUB_PORT, ssl_context=context, threaded=True)
-            cert_found = True
-            break
-    
-    if not cert_found:
-        logger.warning("SSL cert not found in any location, running HTTP subscription service")
-        logger.warning("Subscription URL: http://SERVER_IP:{SUB_PORT}/sub")
-        logger.warning("Subscription URL: http://SERVER_IP:{SUB_PORT}/sub/{COUNTRY_CODE}")
-        logger.warning("Subscription URL: http://SERVER_IP:{SUB_PORT}/{SUB_TOKEN}")
-        app.run(host='0.0.0.0', port=SUB_PORT, threaded=True)
+    logger.info(f"Starting HTTP subscription service on 0.0.0.0:{SUB_PORT}")
+    logger.info(f"Subscription URL: http://SERVER_IP:{SUB_PORT}/sub/{COUNTRY_CODE}")
+    app.run(host='0.0.0.0', port=SUB_PORT, threaded=True)

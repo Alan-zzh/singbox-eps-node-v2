@@ -10,7 +10,7 @@ Date: 2026-04-20
 import os
 
 # 路径配置
-BASE_DIR = '/root/singbox-manager'
+BASE_DIR = '/root/singbox-eps-node'
 CERT_DIR = os.path.join(BASE_DIR, 'cert')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 GEO_DIR = os.path.join(BASE_DIR, 'geo')

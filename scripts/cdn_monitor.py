@@ -2,9 +2,12 @@
 """
 CDN监控脚本
 Author: Alan
-Version: v1.0.3
+Version: v1.0.32
 Date: 2026-04-20
-功能：自动获取Cloudflare优选IP并保存到数据库
+功能：
+  - 使用湖南电信DNS解析获取Cloudflare优选IP
+  - 自动分配每个协议独立IP
+  - 首选IP池：用户实测最快的IP（50ms左右）
 """
 
 import os
@@ -14,6 +17,7 @@ import sqlite3
 import random
 import re
 import requests
+import subprocess
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,7 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from config import (
         SERVER_IP, DATA_DIR, CF_DOMAIN,
-        CDN_DB_URL, CDN_MONITOR_INTERVAL, CDN_TOP_IPS_COUNT
+        CDN_DB_URL, CDN_MONITOR_INTERVAL, CDN_TOP_IPS_COUNT,
+        AI_SOCKS5_SERVER, AI_SOCKS5_PORT, AI_SOCKS5_USER, AI_SOCKS5_PASS
     )
     from logger import get_logger
 except ImportError:
@@ -32,13 +37,36 @@ except ImportError:
 
 logger = get_logger('cdn_monitor')
 
-# 动态网站源（带国内身份伪装）
-CDN_DB_URL = 'https://api.uouin.com/cloudflare.html'
-CDN_BACKUP_URLS = [
-    'https://raw.githubusercontent.com/XIU2/CloudflareSpeedTest/master/ip.txt',
-    'https://cf.090227.xyz/',
+# 湖南电信DNS服务器
+HUNAN_DNS = ['222.246.129.80', '59.51.78.210', '114.114.114.114']
+
+# 用户实测最快的Cloudflare IP池（50ms左右，按延时排序）
+# 来源：用户本地通过湖南电信DNS实测
+PREFERRED_IPS = [
+    '172.64.33.166',    # 46.06ms - 最快
+    '162.159.45.15',    # 51.39ms
+    '172.64.53.179',    # 51.98ms
+    '108.162.198.145',  # 52.01ms
+    '172.64.52.205',    # 52.41ms
+    '162.159.44.103',   # 52.51ms
+    '162.159.39.190',   # 52.68ms
+    '162.159.38.26',    # 53.14ms
+    '162.159.7.250',    # 53.83ms
+    '104.18.37.65',     # 53.78ms
 ]
-CDN_FALLBACK_IPS = ['104.16.1.1', '104.16.132.229', '104.17.1.1']
+
+# 备用IP池（100ms+，较慢）
+BACKUP_IPS = [
+    '104.26.6.15',
+    '104.26.5.196',
+    '104.20.18.86',
+    '172.67.76.251',
+    '172.67.75.190',
+    '104.16.1.1',
+    '104.16.132.229',
+    '104.17.1.1',
+]
+
 CDN_TOP_IPS_COUNT = 5
 MONITOR_INTERVAL = 3600
 
@@ -58,50 +86,74 @@ def init_db():
     return os.path.join(DATA_DIR, 'singbox.db')
 
 def fetch_cdn_ips():
-    """精确扒取测速网页，支持湖南电信专属IP池容灾轮询"""
-    target_url = 'https://api.uouin.com/cloudflare.html'
+    """获取优选IP（优先使用用户实测最快IP池）"""
+    # 策略1：直接使用用户实测最快的IP池（50ms左右）
+    logger.info(f">>> 使用用户实测最快IP池（50ms级别）")
+    logger.info(f">>> 首选IP: {PREFERRED_IPS[:5]}")
     
-    # 定义伪装 IP 矩阵池（严格按照你要求的优先级排布）
-    spoof_ips = [
-        '222.246.129.80',   # 优先级一：你指定的湖南电信最优 DNS
-        '59.51.78.210',     # 优先级二：备用湖南电信 DNS
-        '114.114.114.114'   # 优先级三：全国通用 DNS（终极兜底，防止目标网站封锁湖南号段）
+    # 验证IP是否可达（ping测试）
+    valid_ips = []
+    for ip in PREFERRED_IPS:
+        if ping_ip(ip):
+            valid_ips.append(ip)
+            if len(valid_ips) >= CDN_TOP_IPS_COUNT:
+                break
+    
+    if valid_ips:
+        logger.info(f"[OK] 验证通过 {len(valid_ips)} 个最快IP: {valid_ips}")
+        return valid_ips
+    
+    # 策略2：如果首选IP都不可达，尝试通过DNS解析获取
+    logger.info(">>> 首选IP不可达，尝试DNS解析获取...")
+    dns_ips = resolve_via_dns()
+    if dns_ips:
+        logger.info(f"[OK] DNS解析获取IP: {dns_ips}")
+        return dns_ips
+    
+    # 策略3：使用备用IP池
+    logger.warning("[WARN] DNS解析失败，使用备用IP池")
+    return BACKUP_IPS[:CDN_TOP_IPS_COUNT]
+
+def ping_ip(ip, timeout=3):
+    """ping测试IP是否可达"""
+    try:
+        result = subprocess.run(
+            ['ping', '-c', '1', '-W', str(timeout), ip],
+            capture_output=True, text=True, timeout=timeout + 1
+        )
+        return result.returncode == 0
+    except:
+        return False
+
+def resolve_via_dns():
+    """通过湖南电信DNS解析CF域名获取IP"""
+    cf_domains = [
+        'jp.290372913.xyz',
+        'cf.290372913.xyz',
+        'cdn.290372913.xyz',
     ]
-
-    for current_ip in spoof_ips:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'X-Forwarded-For': current_ip,
-            'X-Real-IP': current_ip,
-            'Client-IP': current_ip
-        }
-
-        try:
-            logger.info(f">>> 尝试使用面具 IP ({current_ip}) 扒取优选节点...")
-            response = requests.get(target_url, headers=headers, timeout=15)
-            
-            if response.status_code == 200:
-                found_ips = re.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', response.text)
-                
-                valid_ips = []
-                for ip in found_ips:
-                    if ip.startswith(('104.', '172.', '162.', '108.', '141.', '198.')):
-                        valid_ips.append(ip)
-
-                if valid_ips:
-                    unique_ips = list(dict.fromkeys(valid_ips))
-                    top_5_ips = unique_ips[:5]
-                    logger.info(f"[OK] 成功使用 {current_ip} 扒取到 5 个极速 IP: {top_5_ips}")
-                    return top_5_ips # 一旦成功获取，立刻退出循环并返回
-                else:
-                    logger.warning(f"[WARN] IP {current_ip} 未能扒取到有效数据，自动切换下一个...")
-        except Exception as e:
-            logger.warning(f"[WARN] 使用 IP {current_ip} 扒取失败: {e}，自动切换下一个...")
-            continue
     
-    # 如果所有的伪装 IP 都被网站拉黑了，使用内置的兜底 IP 保证不断网
-    logger.error("[ERROR] 所有伪装 IP 扒取均失败，下发官方兜底节点")
-    return CDN_FALLBACK_IPS[:5]
+    all_ips = []
+    for dns_server in HUNAN_DNS:
+        for domain in cf_domains:
+            try:
+                result = subprocess.run(
+                    ['dig', '+short', domain, f'@{dns_server}'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.stdout.strip():
+                    for line in result.stdout.strip().split('\n'):
+                        ip = line.strip()
+                        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+                            if ip not in all_ips:
+                                all_ips.append(ip)
+            except:
+                continue
+        
+        if all_ips:
+            break  # 获取到IP就停止
+    
+    return all_ips[:CDN_TOP_IPS_COUNT] if all_ips else []
 
 def assign_and_save_ips(ips):
     """分配并保存优选IP（前10个随机选3个，每个协议独立IP）"""

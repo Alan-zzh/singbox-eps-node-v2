@@ -90,8 +90,8 @@ config = {
             "tls": {
                 "enabled": True,
                 "server_name": cf_domain or server_ip,
-                "certificate_path": "/root/singbox-eps-node/cert/cert.crt",
-                "key_path": "/root/singbox-eps-node/cert/cert.key",
+                "certificate_path": "/root/singbox-eps-node/cert/cert.pem",
+                "key_path": "/root/singbox-eps-node/cert/key.pem",
                 "alpn": ["http/1.1"]
             }
         },
@@ -109,8 +109,8 @@ config = {
             "tls": {
                 "enabled": True,
                 "server_name": cf_domain or server_ip,
-                "certificate_path": "/root/singbox-eps-node/cert/cert.crt",
-                "key_path": "/root/singbox-eps-node/cert/cert.key",
+                "certificate_path": "/root/singbox-eps-node/cert/cert.pem",
+                "key_path": "/root/singbox-eps-node/cert/key.pem",
                 "alpn": ["http/1.1"]
             }
         },
@@ -128,8 +128,8 @@ config = {
             "tls": {
                 "enabled": True,
                 "server_name": cf_domain or server_ip,
-                "certificate_path": "/root/singbox-eps-node/cert/cert.crt",
-                "key_path": "/root/singbox-eps-node/cert/cert.key",
+                "certificate_path": "/root/singbox-eps-node/cert/cert.pem",
+                "key_path": "/root/singbox-eps-node/cert/key.pem",
                 "alpn": ["http/1.1"]
             }
         },
@@ -142,8 +142,8 @@ config = {
             "tls": {
                 "enabled": True,
                 "server_name": "www.apple.com",
-                "certificate_path": "/root/singbox-eps-node/cert/cert.crt",
-                "key_path": "/root/singbox-eps-node/cert/cert.key",
+                "certificate_path": "/root/singbox-eps-node/cert/cert.pem",
+                "key_path": "/root/singbox-eps-node/cert/key.pem",
                 "alpn": ["h3"]
             },
             "obfs": {

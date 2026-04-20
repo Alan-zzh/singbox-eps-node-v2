@@ -32,7 +32,12 @@ except ImportError:
 
 logger = get_logger('cert_manager')
 
-CERT_DIR = '/root/singbox-manager/cert'
+# 从config.py统一读取路径，不再硬编码
+try:
+    from config import CERT_DIR
+except ImportError:
+    CERT_DIR = '/root/singbox-eps-node/cert'
+
 CERT_FILE = os.path.join(CERT_DIR, 'cert.crt')
 KEY_FILE = os.path.join(CERT_DIR, 'cert.key')
 CERT_VALIDITY_DAYS = 365
@@ -50,7 +55,7 @@ def get_cf_api_token():
     if token:
         return token
 
-    env_file = '/root/singbox-manager/.env'
+    env_file = '/root/singbox-eps-node/.env'
     if os.path.exists(env_file):
         with open(env_file, 'r') as f:
             for line in f:

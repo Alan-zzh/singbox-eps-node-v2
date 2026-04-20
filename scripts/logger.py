@@ -2,21 +2,24 @@
 """
 日志模块
 Author: Alan
-Version: v1.0.3
+Version: v1.0.4
 Date: 2026-04-20
-功能：统一的日志管理
+功能：统一的日志管理，带自动滚动和大小限制
 """
 
 import os
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
 LOG_DIR = '/var/log'
 LOG_FILE = os.path.join(LOG_DIR, 'singbox.log')
+MAX_LOG_SIZE = 50 * 1024 * 1024  # 50MB
+BACKUP_COUNT = 2  # 保留2个备份
 
 def setup_logger(name, log_file=None, level=logging.INFO):
-    """创建日志记录器"""
+    """创建日志记录器，带自动滚动功能"""
     if log_file is None:
         log_file = LOG_FILE
 
@@ -27,7 +30,13 @@ def setup_logger(name, log_file=None, level=logging.INFO):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    handler = logging.FileHandler(log_file, encoding='utf-8')
+    # 使用RotatingFileHandler自动限制日志文件大小
+    handler = RotatingFileHandler(
+        log_file,
+        maxBytes=MAX_LOG_SIZE,
+        backupCount=BACKUP_COUNT,
+        encoding='utf-8'
+    )
     handler.setFormatter(formatter)
 
     console_handler = logging.StreamHandler(sys.stdout)
@@ -35,11 +44,17 @@ def setup_logger(name, log_file=None, level=logging.INFO):
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.addHandler(handler)
-    logger.addHandler(console_handler)
+    
+    # 避免重复添加handler
+    if not logger.handlers:
+        logger.addHandler(handler)
+        logger.addHandler(console_handler)
 
     return logger
 
 def get_logger(name):
     """获取日志记录器"""
-    return logging.getLogger(name) if logging.getLogger(name).handlers else setup_logger(name)
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        return setup_logger(name)
+    return logger
