@@ -175,13 +175,14 @@ def generate_all_links():
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
     links.append(f"trojan://{TROJAN_PASSWORD}@{trojan_ws_addr}:{TROJAN_WS_PORT}?{param_str}#{COUNTRY_CODE}-Trojan-WS{cdn_suffix}")
 
-    # 5. Hysteria2 (直连) - 使用固定端口443
+    # 5. Hysteria2 (直连) - 端口443，iptables端口跳跃22000-22200
+    # 客户端配置端口443，服务器通过iptables将22000-22200的UDP流量转发到443
     params = {
         'sni': REALITY_SNI,
         'insecure': '1',
-        'protocol': 'hysteria2',
         'obfs': 'salamander',
-        'obfs-password': HYSTERIA2_PASSWORD[:8]
+        'obfs-password': HYSTERIA2_PASSWORD[:8],
+        'mport': '443,22000-22200'  # 多端口配置，支持端口跳跃
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
     links.append(f"hysteria2://{HYSTERIA2_PASSWORD}@{SERVER_IP}:443?{param_str}#{COUNTRY_CODE}-Hysteria2")
