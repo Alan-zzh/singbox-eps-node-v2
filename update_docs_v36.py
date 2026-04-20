@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""更新文档"""
+"""更新文档并提交"""
 import os
 
 LOCAL_DIR = r'd:\Documents\Syncdisk\工作用\job\S-ui\singbox-eps-node'
 os.chdir(LOCAL_DIR)
 
-# 更新project_snapshot.md
 snapshot = """# 项目状态快照 (Project Snapshot)
 
 ## 当前版本
-**v1.0.35** (文档完善+状态确认)
+**v1.0.36** (CDN优选IP改为实时DNS解析+每小时自动更新)
 
 ---
 
@@ -18,10 +17,28 @@ snapshot = """# 项目状态快照 (Project Snapshot)
 |------|------|----------|
 | v1.0.34 | 2026-04-20 | HTTPS订阅服务+Cloudflare正式证书+端口9443 |
 | v1.0.35 | 2026-04-20 | 文档完善+CDN/SOCKS5状态确认+证书申请流程记录 |
+| v1.0.36 | 2026-04-20 | CDN优选IP改为实时DNS解析+每小时自动更新 |
 
 ---
 
-## 最新更新内容 (v1.0.35)
+## 最新更新内容 (v1.0.36)
+
+### CDN优选IP改为实时DNS解析
+**之前的问题**: 写死了10个固定IP池，IP可能失效
+**现在的方案**: 每小时通过湖南电信DNS实时解析获取最新Cloudflare IP
+
+**工作流程**:
+1. 使用湖南电信DNS（222.246.129.80, 59.51.78.210, 114.114.114.114）解析域名
+2. 获取Cloudflare返回的IP列表
+3. ping测试验证IP可达性
+4. 分配给不同协议（每个协议独立IP）
+5. 保存到数据库，订阅服务自动读取
+6. 每小时重复一次
+
+**当前优选IP** (2026-04-20 14:18):
+- VLESS-WS: 104.21.35.190:8443
+- VLESS-HTTPUpgrade: 172.67.178.214:2053
+- Trojan-WS: 104.21.35.190:2083
 
 ### Cloudflare正式证书申请流程
 **证书类型**: Let's Encrypt正式证书（通过acme.sh + Cloudflare DNS API）
@@ -48,37 +65,12 @@ snapshot = """# 项目状态快照 (Project Snapshot)
 - cron任务: `48 8 * * *` (每天8:48自动检查续期)
 - 证书有效期: 90天，到期前30天自动续期
 
-### CDN优选IP状态 ✅
-- **服务**: singbox-cdn (active)
-- **检测频率**: 每小时一次
-- **cron任务**: 每天凌晨3点运行（有8条重复，需清理）
-- **当前优选IP**:
-  - VLESS-WS: 172.64.33.166:8443
-  - VLESS-HTTPUpgrade: 162.159.45.15:2053
-  - Trojan-WS: 108.162.198.145:2083
-- **存储**: 内存中（未写入数据库）
-
-### SOCKS5自动切换说明
-**当前状态**: 固定配置，无自动切换
-**当前节点**: 206.163.4.241:36753 (用户名:4KKsLB7F, 密码:KgEKVmVgxJ)
-
-**自动切换含义**: 
-- 维护一个SOCKS5节点池（多个服务器）
-- 定期检测每个节点的延迟和可用性
-- 订阅时自动返回最快可用的节点
-- 当节点失效时自动切换到备用节点
-
-**需要开发的功能**:
-1. SOCKS5节点池管理（添加/删除节点）
-2. 健康检查脚本（定期ping每个节点）
-3. 订阅服务集成（按延迟排序返回）
-
 ---
 
 ## 当前服务状态
 - **singbox**: active (端口443/8443/2053/2083)
 - **singbox-sub**: active (HTTPS://0.0.0.0:9443)
-- **singbox-cdn**: active (每小时更新优选IP)
+- **singbox-cdn**: active (每小时DNS解析更新优选IP)
 - **iptables**: 端口跳跃 22000-22200 -> 443
 - **acme.sh**: 自动续期已配置 (每天8:48)
 
@@ -89,9 +81,9 @@ snapshot = """# 项目状态快照 (Project Snapshot)
 
 ## 节点列表（6个）
 1. JP-VLESS-Reality: 54.250.149.157:443 (直连)
-2. JP-VLESS-WS-CDN: 优选IP:8443 (CDN)
-3. JP-VLESS-HTTPUpgrade-CDN: 优选IP:2053 (CDN)
-4. JP-Trojan-WS-CDN: 优选IP:2083 (CDN)
+2. JP-VLESS-WS-CDN: 优选IP:8443 (CDN，每小时更新)
+3. JP-VLESS-HTTPUpgrade-CDN: 优选IP:2053 (CDN，每小时更新)
+4. JP-Trojan-WS-CDN: 优选IP:2083 (CDN，每小时更新)
 5. JP-Hysteria2: 54.250.149.157:443 (直连，端口跳跃22000-22200)
 6. AI-SOCKS5: 206.163.4.241:36753 (外部代理，固定配置)
 
@@ -109,7 +101,7 @@ snapshot = """# 项目状态快照 (Project Snapshot)
 ├── scripts/
 │   ├── config.py           # 全局配置
 │   ├── logger.py           # 日志管理
-│   ├── cdn_monitor.py      # CDN监控脚本
+│   ├── cdn_monitor.py      # CDN监控脚本（每小时DNS解析）
 │   ├── subscription_service.py  # 订阅服务（HTTPS）
 │   └── config_generator.py # 配置生成器
 ├── logs/                   # 日志目录
@@ -125,6 +117,7 @@ snapshot = """# 项目状态快照 (Project Snapshot)
 1. **端口冲突**: 8443被singbox主服务占用，订阅服务改用9443
 2. **SSL配置**: Flask的ssl_context需要fullchain.pem和key.pem
 3. **acme.sh凭证**: API Token使用CF_Token变量，Global API Key使用CF_Key+CF_Email
+4. **CDN IP写死**: 之前写死10个固定IP，改为每小时DNS实时解析
 
 ## 下一步待办
 - [ ] 清理重复的cron任务
@@ -137,8 +130,7 @@ with open(os.path.join(LOCAL_DIR, 'project_snapshot.md'), 'w', encoding='utf-8')
 print('✅ project_snapshot.md已更新')
 
 # 删除临时脚本
-import os
-for f in ['check_status.py']:
+for f in ['check_socks5.py', 'check_cdn_method.py', 'check_db_ips.py', 'deploy_cdn.py', 'check_cdn_log.py', 'check_cdn_log2.py', 'update_docs.py']:
     path = os.path.join(LOCAL_DIR, f)
     if os.path.exists(path):
         os.remove(path)
