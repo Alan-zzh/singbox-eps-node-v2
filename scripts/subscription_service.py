@@ -176,7 +176,7 @@ def generate_all_links():
         'path': '/trojan-ws',
         'host': cdn_sni,
     }
-    param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
+    param_str = '&'.join([f"{k}={urllib.parse.quote(str(v), safe='')}" for k, v in params.items() if v])
     links.append(f"trojan://{TROJAN_PASSWORD}@{trojan_ws_addr}:{TROJAN_WS_PORT}?{param_str}#{COUNTRY_CODE}-Trojan-WS{cdn_suffix}")
 
     # 5. Hysteria2 (直连) - 端口443，iptables端口跳跃22000-22200
@@ -618,4 +618,6 @@ if __name__ == '__main__':
     logger.info(f"Starting HTTPS subscription service on 0.0.0.0:{SUB_PORT}")
     logger.info(f"Base64订阅: https://SERVER_IP:{SUB_PORT}/sub/{COUNTRY_CODE}")
     logger.info(f"sing-box JSON: https://SERVER_IP:{SUB_PORT}/singbox/{COUNTRY_CODE}")
-    app.run(host='0.0.0.0', port=SUB_PORT, threaded=True)
+    app.run(host='0.0.0.0', port=SUB_PORT, threaded=True,
+            ssl_context=('/root/singbox-eps-node/cert/fullchain.pem',
+                         '/root/singbox-eps-node/cert/key.pem'))

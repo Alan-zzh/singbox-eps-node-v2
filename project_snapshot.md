@@ -1,7 +1,7 @@
 # 项目状态快照 (Project Snapshot)
 
 ## 当前版本
-**v1.0.40** (SOCKS5路由规则优化+排除X/推特/groK)
+**v1.0.41** (修复Trojan-WS协议不通问题)
 
 ---
 
@@ -15,10 +15,27 @@
 | v1.0.38 | 2026-04-20 | 新增sing-box JSON配置接口，内置AI流量自动路由规则 |
 | v1.0.39 | 2026-04-20 | 修复Trojan-WS链接缺少insecure=1参数 |
 | v1.0.40 | 2026-04-20 | SOCKS5路由规则优化：加入aistudio.google.com，排除X/推特/groK |
+| v1.0.41 | 2026-04-20 | 修复Trojan-WS协议不通：添加SSL配置+修复path参数URL编码 |
 
 ---
 
-## 最新更新内容 (v1.0.40)
+## 最新更新内容 (v1.0.41)
+
+### 修复Trojan-WS协议不通问题
+**问题现象**: Trojan-WS协议无法连接，客户端显示-1
+
+**问题根因**:
+1. 订阅服务代码缺少SSL配置，导致HTTPS无法正常工作
+2. path参数未URL编码，`/trojan-ws`应该是`%2Ftrojan-ws`
+
+**修复方案**:
+1. 添加SSL证书配置到订阅服务启动代码
+2. 修复path参数URL编码：使用`urllib.parse.quote(str(v), safe='')`
+
+**修复后链接**:
+```
+trojan://uG3hixuWQUJTq6_-Qiakow@104.16.123.96:2083?type=ws&security=tls&sni=jp.290372913.xyz&insecure=1&allowInsecure=1&path=%2Ftrojan-ws&host=jp.290372913.xyz#JP-Trojan-WS-CDN
+```
 
 ### SOCKS5路由规则优化
 **v1.0.40更新**:
