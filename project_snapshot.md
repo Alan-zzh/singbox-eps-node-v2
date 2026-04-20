@@ -1,7 +1,7 @@
 # 项目状态快照 (Project Snapshot)
 
 ## 当前版本
-**v1.0.36** (CDN优选IP改为实时DNS解析+每小时自动更新)
+**v1.0.40** (SOCKS5路由规则优化+排除X/推特/groK)
 
 ---
 
@@ -11,10 +11,62 @@
 | v1.0.34 | 2026-04-20 | HTTPS订阅服务+Cloudflare正式证书+端口9443 |
 | v1.0.35 | 2026-04-20 | 文档完善+CDN/SOCKS5状态确认+证书申请流程记录 |
 | v1.0.36 | 2026-04-20 | CDN优选IP改为实时DNS解析+每小时自动更新 |
+| v1.0.37 | 2026-04-20 | 恢复固定优选IP池（中国用户实测低延迟IP） |
+| v1.0.38 | 2026-04-20 | 新增sing-box JSON配置接口，内置AI流量自动路由规则 |
+| v1.0.39 | 2026-04-20 | 修复Trojan-WS链接缺少insecure=1参数 |
+| v1.0.40 | 2026-04-20 | SOCKS5路由规则优化：加入aistudio.google.com，排除X/推特/groK |
 
 ---
 
-## 最新更新内容 (v1.0.36)
+## 最新更新内容 (v1.0.40)
+
+### SOCKS5路由规则优化
+**v1.0.40更新**:
+- 加入`aistudio.google.com`到AI路由规则
+- 排除X/推特/groK（x.com、twitter.com、twimg.com、t.co、x.ai、grok.com）
+- 排除规则走直连（direct），不走SOCKS5
+
+**AI路由规则**（走SOCKS5）:
+- domain_suffix: openai.com、chatgpt.com、anthropic.com、claude.ai、gemini.google.com、bard.google.com、ai.google、aistudio.google.com、perplexity.ai、midjourney.com、stability.ai、cohere.com、replicate.com、google.com、googleapis.com、gstatic.com
+- domain_keyword: openai、anthropic、claude、gemini、perplexity、aistudio
+
+**排除规则**（走直连）:
+- domain_suffix: x.com、twitter.com、twimg.com、t.co、x.ai、grok.com
+- domain_keyword: twitter、grok
+
+### 恢复固定优选IP池
+**v1.0.36的问题**: 从日本服务器DNS解析获取的IP（104.21.35.190等）对中国用户延迟高
+**v1.0.37的方案**: 恢复固定优选IP池（中国用户实测50ms左右）
+
+**固定IP池**（按延迟排序）:
+- 172.64.33.166 (46.06ms - 最快)
+- 162.159.45.15 (51.39ms)
+- 172.64.53.179 (51.98ms)
+- 108.162.198.145 (52.01ms)
+- 172.64.52.205 (52.41ms)
+- 162.159.44.103 (52.51ms)
+- 162.159.39.190 (52.68ms)
+- 162.159.38.26 (53.14ms)
+- 162.159.7.250 (53.83ms)
+- 104.18.37.65 (53.78ms)
+- 172.67.178.214 (备用)
+- 104.21.35.190 (备用)
+- 104.16.123.96 (备用)
+- 104.16.124.96 (备用)
+
+**更新机制**: 每小时随机打乱IP池，ping验证后取前5个可用IP
+
+### sing-box JSON配置（含自动路由）
+**新增接口**: `/singbox/JP` 返回完整sing-box JSON配置
+
+**自动路由规则**:
+- 中国网站（geosite:cn）→ 直连
+- AI网站（openai.com、chatgpt.com、anthropic.com、claude.ai、gemini.google.com等）→ 自动走AI-SOCKS5
+- 其他网站 → ePS-Auto（用户手动选择节点）
+
+**使用方法**:
+1. 客户端导入: `https://jp.290372913.xyz:9443/singbox/JP`
+2. 导入后AI流量自动走SOCKS5，无需手动选择节点
 
 ### CDN优选IP改为实时DNS解析
 **之前的问题**: 写死了10个固定IP池，IP可能失效

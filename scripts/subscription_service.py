@@ -2,15 +2,17 @@
 """
 订阅服务 - Flask应用
 Author: Alan
-Version: v1.0.31
+Version: v1.0.39
 Date: 2026-04-20
 功能：
   - 提供Base64订阅链接（包含所有节点）
+  - 提供完整sing-box JSON配置（含自动路由规则）
   - CDN优选IP自动分配（每个协议独立IP）
-  - 纯HTTP协议（避免自签证书CN不匹配导致客户端拒绝）
+  - HTTPS支持（Cloudflare正式证书）
 
-订阅链接格式: http://SERVER_IP:6969/sub/{国家代码}
-示例: http://54.250.149.157:6969/sub/JP
+订阅链接格式: 
+  - Base64: https://SERVER_IP:9443/sub/{国家代码}
+  - sing-box JSON: https://SERVER_IP:9443/singbox/{国家代码}
 
 节点命名规则: {国家代码}-{协议}
 - JP-VLESS-Reality (直连节点，苹果域名伪装)
@@ -27,6 +29,7 @@ import base64
 import urllib.parse
 import sqlite3
 import random
+import json
 from datetime import datetime
 import ssl
 
@@ -168,31 +171,332 @@ def generate_all_links():
         'type': 'ws',
         'security': 'tls',
         'sni': cdn_sni,
+        'insecure': '1',
+        'allowInsecure': '1',
         'path': '/trojan-ws',
         'host': cdn_sni,
-        'allowInsecure': '1'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
     links.append(f"trojan://{TROJAN_PASSWORD}@{trojan_ws_addr}:{TROJAN_WS_PORT}?{param_str}#{COUNTRY_CODE}-Trojan-WS{cdn_suffix}")
 
     # 5. Hysteria2 (直连) - 端口443，iptables端口跳跃22000-22200
-    # 客户端配置端口443，服务器通过iptables将22000-22200的UDP流量转发到443
     params = {
         'sni': REALITY_SNI,
         'insecure': '1',
         'obfs': 'salamander',
         'obfs-password': HYSTERIA2_PASSWORD[:8],
-        'mport': '443,22000-22200'  # 多端口配置，支持端口跳跃
+        'mport': '443,22000-22200'
     }
     param_str = '&'.join([f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v])
     links.append(f"hysteria2://{HYSTERIA2_PASSWORD}@{SERVER_IP}:443?{param_str}#{COUNTRY_CODE}-Hysteria2")
 
     # 6. SOCKS5 (AI协议牵制节点)
-    # 服务器: 206.163.4.241, 端口: 36753, 用户名: 4KKsLB7F, 密码: KgEKVmVgxJ
     socks5_link = f"socks5://4KKsLB7F:KgEKVmVgxJ@206.163.4.241:36753#AI-SOCKS5"
     links.append(socks5_link)
 
     return links
+
+def generate_singbox_config():
+    """生成完整sing-box JSON配置（含自动路由规则）"""
+    vless_ws_addr = get_cdn_ip_for_protocol('vless_ws_cdn_ip')
+    vless_upgrade_addr = get_cdn_ip_for_protocol('vless_upgrade_cdn_ip')
+    trojan_ws_addr = get_cdn_ip_for_protocol('trojan_ws_cdn_ip')
+
+    cdn_sni = CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else SERVER_IP
+
+    config = {
+        "log": {
+            "level": "info",
+            "timestamp": True
+        },
+        "dns": {
+            "servers": [
+                {
+                    "tag": "dns_proxy",
+                    "address": "tls://8.8.8.8",
+                    "detour": "ePS-Auto"
+                },
+                {
+                    "tag": "dns_direct",
+                    "address": "h3://dns.alidns.com/dns-query",
+                    "detour": "direct"
+                },
+                {
+                    "tag": "dns_block",
+                    "address": "rcode://success"
+                },
+                {
+                    "tag": "dns_fakeip",
+                    "address": "fakeip"
+                }
+            ],
+            "rules": [
+                {
+                    "outbound": "any",
+                    "server": "dns_direct"
+                },
+                {
+                    "geosite": "cn",
+                    "server": "dns_direct"
+                },
+                {
+                    "geosite": "geolocation-!cn",
+                    "server": "dns_proxy"
+                }
+            ],
+            "final": "dns_proxy",
+            "fakeip": {
+                "enabled": True,
+                "inet4_range": "198.18.0.0/15"
+            }
+        },
+        "inbounds": [
+            {
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "127.0.0.1",
+                "listen_port": 2080
+            },
+            {
+                "type": "tun",
+                "tag": "tun-in",
+                "inet4_address": "172.19.0.1/30",
+                "auto_route": True,
+                "strict_route": True,
+                "stack": "mixed"
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "selector",
+                "tag": "ePS-Auto",
+                "outbounds": [
+                    f"{COUNTRY_CODE}-VLESS-Reality",
+                    f"{COUNTRY_CODE}-VLESS-WS",
+                    f"{COUNTRY_CODE}-VLESS-HTTPUpgrade",
+                    f"{COUNTRY_CODE}-Trojan-WS",
+                    f"{COUNTRY_CODE}-Hysteria2",
+                    "AI-SOCKS5",
+                    "direct"
+                ],
+                "default": f"{COUNTRY_CODE}-VLESS-Reality"
+            },
+            {
+                "type": "selector",
+                "tag": "ai-residential",
+                "outbounds": ["AI-SOCKS5"],
+                "default": "AI-SOCKS5"
+            },
+            {
+                "type": "direct",
+                "tag": "direct"
+            },
+            {
+                "type": "block",
+                "tag": "block"
+            },
+            {
+                "type": "dns",
+                "tag": "dns-out"
+            },
+            # VLESS-Reality
+            {
+                "type": "vless",
+                "tag": f"{COUNTRY_CODE}-VLESS-Reality",
+                "server": SERVER_IP,
+                "server_port": 443,
+                "uuid": VLESS_UUID,
+                "flow": "xtls-rprx-vision",
+                "packet_encoding": "xudp",
+                "tls": {
+                    "enabled": True,
+                    "server_name": REALITY_SNI,
+                    "utls": {
+                        "enabled": True,
+                        "fingerprint": "chrome"
+                    },
+                    "reality": {
+                        "enabled": True,
+                        "public_key": REALITY_PUBLIC_KEY,
+                        "short_id": REALITY_SHORT_ID
+                    }
+                }
+            },
+            # VLESS-WS (CDN)
+            {
+                "type": "vless",
+                "tag": f"{COUNTRY_CODE}-VLESS-WS",
+                "server": vless_ws_addr,
+                "server_port": VLESS_WS_PORT,
+                "uuid": VLESS_WS_UUID,
+                "packet_encoding": "xudp",
+                "tls": {
+                    "enabled": True,
+                    "server_name": cdn_sni,
+                    "insecure": True,
+                    "utls": {
+                        "enabled": True,
+                        "fingerprint": "chrome"
+                    }
+                },
+                "transport": {
+                    "type": "ws",
+                    "path": "/vless-ws",
+                    "headers": {
+                        "Host": cdn_sni
+                    }
+                }
+            },
+            # VLESS-HTTPUpgrade (CDN)
+            {
+                "type": "vless",
+                "tag": f"{COUNTRY_CODE}-VLESS-HTTPUpgrade",
+                "server": vless_upgrade_addr,
+                "server_port": VLESS_UPGRADE_PORT,
+                "uuid": VLESS_WS_UUID,
+                "packet_encoding": "xudp",
+                "tls": {
+                    "enabled": True,
+                    "server_name": cdn_sni,
+                    "insecure": True,
+                    "utls": {
+                        "enabled": True,
+                        "fingerprint": "chrome"
+                    }
+                },
+                "transport": {
+                    "type": "httpupgrade",
+                    "path": "/vless-upgrade",
+                    "host": cdn_sni
+                }
+            },
+            # Trojan-WS (CDN)
+            {
+                "type": "trojan",
+                "tag": f"{COUNTRY_CODE}-Trojan-WS",
+                "server": trojan_ws_addr,
+                "server_port": TROJAN_WS_PORT,
+                "password": TROJAN_PASSWORD,
+                "tls": {
+                    "enabled": True,
+                    "server_name": cdn_sni,
+                    "insecure": True
+                },
+                "transport": {
+                    "type": "ws",
+                    "path": "/trojan-ws",
+                    "headers": {
+                        "Host": cdn_sni
+                    }
+                }
+            },
+            # Hysteria2
+            {
+                "type": "hysteria2",
+                "tag": f"{COUNTRY_CODE}-Hysteria2",
+                "server": SERVER_IP,
+                "server_port": 443,
+                "password": HYSTERIA2_PASSWORD,
+                "tls": {
+                    "enabled": True,
+                    "server_name": REALITY_SNI,
+                    "insecure": True
+                },
+                "obfs": {
+                    "type": "salamander",
+                    "password": HYSTERIA2_PASSWORD[:8]
+                },
+                "up_mbps": 100,
+                "down_mbps": 100
+            },
+            # AI-SOCKS5
+            {
+                "type": "socks",
+                "tag": "AI-SOCKS5",
+                "server": "206.163.4.241",
+                "server_port": 36753,
+                "version": "5",
+                "username": "4KKsLB7F",
+                "password": "KgEKVmVgxJ"
+            }
+        ],
+        "route": {
+            "rules": [
+                {
+                    "protocol": "dns",
+                    "outbound": "dns-out"
+                },
+                {
+                    "ip_is_private": True,
+                    "outbound": "direct"
+                },
+                {
+                    "geosite": "cn",
+                    "geoip": ["cn", "private"],
+                    "outbound": "direct"
+                },
+                # AI网站自动走SOCKS5（无感路由）
+                {
+                    "domain_suffix": [
+                        "openai.com",
+                        "chatgpt.com",
+                        "anthropic.com",
+                        "claude.ai",
+                        "gemini.google.com",
+                        "bard.google.com",
+                        "ai.google",
+                        "aistudio.google.com",
+                        "perplexity.ai",
+                        "midjourney.com",
+                        "stability.ai",
+                        "cohere.com",
+                        "replicate.com",
+                        "google.com",
+                        "googleapis.com",
+                        "gstatic.com"
+                    ],
+                    "domain_keyword": [
+                        "openai",
+                        "anthropic",
+                        "claude",
+                        "gemini",
+                        "perplexity",
+                        "aistudio"
+                    ],
+                    "outbound": "ai-residential"
+                },
+                # 排除X/推特/groK（不走SOCKS5）
+                {
+                    "domain_suffix": [
+                        "x.com",
+                        "twitter.com",
+                        "twimg.com",
+                        "t.co",
+                        "x.ai",
+                        "grok.com"
+                    ],
+                    "domain_keyword": [
+                        "twitter",
+                        "grok"
+                    ],
+                    "outbound": "direct"
+                }
+            ],
+            "auto_detect_interface": True,
+            "final": "ePS-Auto"
+        },
+        "experimental": {
+            "cache_file": {
+                "enabled": True
+            },
+            "clash_api": {
+                "external_controller": "127.0.0.1:9090",
+                "external_ui": "dashboard"
+            }
+        }
+    }
+
+    return config
 
 def create_app():
     """创建Flask应用"""
@@ -207,36 +511,44 @@ def create_app():
         <head>
             <title>Singbox订阅服务</title>
             <style>
-                body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-                h1 { color: #333; }
-                .sub-box { background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0; }
-                .sub-link { font-size: 18px; color: #0066cc; word-break: break-all; }
-                .info { color: #666; font-size: 14px; }
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }}
+                h1 {{ color: #333; }}
+                .sub-box {{ background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0; }}
+                .sub-link {{ font-size: 18px; color: #0066cc; word-break: break-all; }}
+                .info {{ color: #666; font-size: 14px; }}
             </style>
         </head>
         <body>
             <h1>Singbox 订阅服务</h1>
             <div class="sub-box">
-                <p><strong>订阅链接：</strong></p>
-                <p class="sub-link">http://%s:%s/sub/%s</p>
-                <p class="info">（包含6个节点：%s-VLESS-Reality、%s-VLESS-WS、%s-VLESS-HTTPUpgrade、%s-Trojan-WS、%s-Hysteria2、AI-SOCKS5）</p>
+                <p><strong>Base64订阅链接：</strong></p>
+                <p class="sub-link">https://{server}:{port}/sub/{country}</p>
+                <p class="info">（包含6个节点：{country}-VLESS-Reality、{country}-VLESS-WS、{country}-VLESS-HTTPUpgrade、{country}-Trojan-WS、{country}-Hysteria2、AI-SOCKS5）</p>
+            </div>
+            <div class="sub-box">
+                <p><strong>sing-box JSON配置（含自动路由）：</strong></p>
+                <p class="sub-link">https://{server}:{port}/singbox/{country}</p>
+                <p class="info">（导入后AI流量自动走SOCKS5，无需手动选择）</p>
             </div>
             <div class="info">
-                <p>服务器IP: %s</p>
-                <p>域名: %s</p>
-                <p>使用域名: %s</p>
+                <p>服务器IP: {server}</p>
+                <p>域名: {domain}</p>
+                <p>使用HTTPS: 是</p>
             </div>
         </body>
         </html>
-        """ % (SERVER_IP, SUB_PORT, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, COUNTRY_CODE, SERVER_IP, CF_DOMAIN if CF_DOMAIN else '未配置', '是' if USE_DOMAIN else '否')
+        """.format(
+            server=CF_DOMAIN if (CF_DOMAIN and CF_DOMAIN.strip()) else SERVER_IP,
+            port=SUB_PORT,
+            country=COUNTRY_CODE,
+            domain=CF_DOMAIN if CF_DOMAIN else '未配置'
+        )
         return Response(html, mimetype='text/html')
 
     @app.route(f'/sub/{COUNTRY_CODE}')
     @app.route('/sub')
     def get_subscription():
-        user_agent = request.headers.get('User-Agent', '').lower()
-        if 'clash' in user_agent or 'stash' in user_agent or 'shadowrocket' in user_agent:
-            return get_clash_subscription()
+        """Base64订阅链接（兼容旧客户端）"""
         links = generate_all_links()
         if EXTERNAL_SUBS and EXTERNAL_SUBS.strip():
             for sub_url in EXTERNAL_SUBS.split('|'):
@@ -258,214 +570,16 @@ def create_app():
         sub_b64 = base64.b64encode(sub_text.encode('utf-8')).decode('utf-8')
         return Response(sub_b64, mimetype='text/plain')
 
-    def get_clash_subscription():
-        links = generate_all_links()
-        proxies = []
-        for link in links:
-            try:
-                if link.startswith('vless://'):
-                    proxy = parse_vless_link(link)
-                    if proxy:
-                        proxies.append(proxy)
-                elif link.startswith('trojan://'):
-                    proxy = parse_trojan_link(link)
-                    if proxy:
-                        proxies.append(proxy)
-                elif link.startswith('hysteria2://'):
-                    proxy = parse_hysteria2_link(link)
-                    if proxy:
-                        proxies.append(proxy)
-                elif link.startswith('socks5://'):
-                    proxy = parse_socks5_link(link)
-                    if proxy:
-                        proxies.append(proxy)
-            except Exception as e:
-                logger.warning(f"Failed to parse link: {e}")
-        yaml_content = generate_clash_yaml(proxies)
-        return Response(yaml_content, mimetype='text/yaml')
-
-    def parse_socks5_link(link):
-        try:
-            parsed = urllib.parse.urlparse(link)
-            username = parsed.username
-            password = parsed.password
-            host = parsed.hostname
-            port = parsed.port
-            tag = urllib.parse.unquote(parsed.fragment)
-            
-            proxy = {
-                'name': tag,
-                'type': 'socks5',
-                'server': host,
-                'port': port,
-                'username': username,
-                'password': password
-            }
-            return proxy
-        except Exception as e:
-            logger.warning(f"Failed to parse socks5: {e}")
-            return None
-
-    def parse_vless_link(link):
-        try:
-            parsed = urllib.parse.urlparse(link)
-            uuid = parsed.username
-            host = parsed.hostname
-            port = parsed.port
-            tag = urllib.parse.unquote(parsed.fragment)
-            query = dict(urllib.parse.parse_qsl(parsed.query))
-            proxy = {
-                'name': tag,
-                'type': 'vless',
-                'server': host,
-                'port': port,
-                'uuid': uuid,
-                'network': query.get('type', 'tcp'),
-                'tls': query.get('security') == 'tls',
-                'udp': True,
-            }
-            if query.get('type') == 'ws':
-                proxy['ws-opts'] = {
-                    'path': query.get('path', '/'),
-                    'headers': {'Host': query.get('host', host)}
-                }
-            elif query.get('type') == 'httpupgrade':
-                proxy['ws-opts'] = {
-                    'path': query.get('path', '/'),
-                    'headers': {'Host': query.get('host', host)},
-                    'v2ray-http-upgrade': True,
-                }
-            if query.get('security') == 'reality':
-                proxy['reality-opts'] = {
-                    'public-key': query.get('pbk', ''),
-                    'short-id': query.get('sid', ''),
-                }
-                proxy['server-name'] = query.get('sni', host)
-                proxy['client-fingerprint'] = query.get('fp', 'chrome')
-            elif query.get('security') == 'tls':
-                proxy['servername'] = query.get('sni', host)
-                proxy['skip-cert-verify'] = query.get('allowInsecure') == '1'
-            return proxy
-        except Exception as e:
-            logger.warning(f"Failed to parse vless: {e}")
-            return None
-
-    def parse_trojan_link(link):
-        try:
-            parsed = urllib.parse.urlparse(link)
-            password = parsed.username
-            host = parsed.hostname
-            port = parsed.port
-            tag = urllib.parse.unquote(parsed.fragment)
-            query = dict(urllib.parse.parse_qsl(parsed.query))
-            proxy = {
-                'name': tag,
-                'type': 'trojan',
-                'server': host,
-                'port': port,
-                'password': password,
-                'network': query.get('type', 'tcp'),
-                'udp': True,
-            }
-            if query.get('type') == 'ws':
-                proxy['ws-opts'] = {
-                    'path': query.get('path', '/'),
-                    'headers': {'Host': query.get('host', host)}
-                }
-            proxy['sni'] = query.get('sni', host)
-            proxy['skip-cert-verify'] = query.get('allowInsecure') == '1'
-            return proxy
-        except Exception as e:
-            logger.warning(f"Failed to parse trojan: {e}")
-            return None
-
-    def parse_hysteria2_link(link):
-        try:
-            parsed = urllib.parse.urlparse(link)
-            password = parsed.username
-            host = parsed.hostname
-            port = parsed.port
-            tag = urllib.parse.unquote(parsed.fragment)
-            query = dict(urllib.parse.parse_qsl(parsed.query))
-            proxy = {
-                'name': tag,
-                'type': 'hysteria2',
-                'server': host,
-                'port': port,
-                'password': password,
-                'udp': True,
-            }
-            if query.get('obfs'):
-                proxy['obfs'] = query.get('obfs')
-                proxy['obfs-password'] = query.get('obfs-password', '')
-            proxy['sni'] = query.get('sni', host)
-            proxy['skip-cert-verify'] = query.get('insecure') == '1'
-            return proxy
-        except Exception as e:
-            logger.warning(f"Failed to parse hysteria2: {e}")
-            return None
-
-    def generate_clash_yaml(proxies):
-        yaml = "mixed-port: 7890\nallow-lan: true\nmode: Rule\nlog-level: info\nproxies:\n"
-        for p in proxies:
-            yaml += f"  - name: \"{p['name']}\"\n"
-            yaml += f"    type: {p['type']}\n"
-            yaml += f"    server: {p['server']}\n"
-            yaml += f"    port: {p['port']}\n"
-            if p['type'] == 'vless':
-                yaml += f"    uuid: {p['uuid']}\n"
-                yaml += f"    network: {p['network']}\n"
-                yaml += f"    tls: {str(p['tls']).lower()}\n"
-                yaml += f"    udp: {str(p['udp']).lower()}\n"
-                if 'ws-opts' in p:
-                    yaml += f"    ws-opts:\n"
-                    yaml += f"      path: \"{p['ws-opts']['path']}\"\n"
-                    yaml += f"      headers:\n"
-                    yaml += f"        Host: \"{p['ws-opts']['headers']['Host']}\"\n"
-                    if p['ws-opts'].get('v2ray-http-upgrade'):
-                        yaml += f"      v2ray-http-upgrade: true\n"
-                if 'reality-opts' in p:
-                    yaml += f"    reality-opts:\n"
-                    yaml += f"      public-key: \"{p['reality-opts']['public-key']}\"\n"
-                    yaml += f"      short-id: \"{p['reality-opts']['short-id']}\"\n"
-                    yaml += f"    server-name: \"{p.get('server-name', p['server'])}\"\n"
-                    yaml += f"    client-fingerprint: \"{p.get('client-fingerprint', 'chrome')}\"\n"
-                elif 'servername' in p:
-                    yaml += f"    servername: \"{p['servername']}\"\n"
-                    yaml += f"    skip-cert-verify: {str(p.get('skip-cert-verify', False)).lower()}\n"
-            elif p['type'] == 'trojan':
-                yaml += f"    password: \"{p['password']}\"\n"
-                yaml += f"    network: {p['network']}\n"
-                yaml += f"    udp: {str(p['udp']).lower()}\n"
-                if 'ws-opts' in p:
-                    yaml += f"    ws-opts:\n"
-                    yaml += f"      path: \"{p['ws-opts']['path']}\"\n"
-                    yaml += f"      headers:\n"
-                    yaml += f"        Host: \"{p['ws-opts']['headers']['Host']}\"\n"
-                yaml += f"    sni: \"{p.get('sni', p['server'])}\"\n"
-                yaml += f"    skip-cert-verify: {str(p.get('skip-cert-verify', False)).lower()}\n"
-            elif p['type'] == 'socks5':
-                yaml += f"    username: \"{p['username']}\"\n"
-                yaml += f"    password: \"{p['password']}\"\n"
-            elif p['type'] == 'hysteria2':
-                yaml += f"    password: \"{p['password']}\"\n"
-                yaml += f"    udp: {str(p['udp']).lower()}\n"
-                if 'obfs' in p:
-                    yaml += f"    obfs: \"{p['obfs']}\"\n"
-                    yaml += f"    obfs-password: \"{p['obfs-password']}\"\n"
-                yaml += f"    sni: \"{p.get('sni', p['server'])}\"\n"
-                yaml += f"    skip-cert-verify: {str(p.get('skip-cert-verify', False)).lower()}\n"
-        yaml += "proxy-groups:\n"
-        yaml += "  - name: \"ePS-Auto\"\n"
-        yaml += "    type: url-test\n"
-        yaml += "    proxies:\n"
-        for p in proxies:
-            yaml += f"      - \"{p['name']}\"\n"
-        yaml += "    url: http://www.gstatic.com/generate_204\n"
-        yaml += "    interval: 300\n"
-        yaml += "rules:\n"
-        yaml += "  - MATCH,ePS-Auto\n"
-        return yaml
+    @app.route(f'/singbox/{COUNTRY_CODE}')
+    @app.route('/singbox')
+    def get_singbox_config():
+        """完整sing-box JSON配置（含自动路由规则）"""
+        config = generate_singbox_config()
+        return Response(
+            json.dumps(config, indent=2, ensure_ascii=False),
+            mimetype='application/json',
+            headers={'Content-Disposition': 'attachment; filename=singbox-config.json'}
+        )
 
     @app.route('/api/cdn', methods=['GET', 'POST'])
     def cdn_api():
@@ -501,6 +615,7 @@ def create_app():
 if __name__ == '__main__':
     init_db()
     app = create_app()
-    logger.info(f"Starting HTTP subscription service on 0.0.0.0:{SUB_PORT}")
-    logger.info(f"Subscription URL: http://SERVER_IP:{SUB_PORT}/sub/{COUNTRY_CODE}")
+    logger.info(f"Starting HTTPS subscription service on 0.0.0.0:{SUB_PORT}")
+    logger.info(f"Base64订阅: https://SERVER_IP:{SUB_PORT}/sub/{COUNTRY_CODE}")
+    logger.info(f"sing-box JSON: https://SERVER_IP:{SUB_PORT}/singbox/{COUNTRY_CODE}")
     app.run(host='0.0.0.0', port=SUB_PORT, threaded=True)

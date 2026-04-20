@@ -2,12 +2,12 @@
 """
 CDN监控脚本
 Author: Alan
-Version: v1.0.36
+Version: v1.0.37
 Date: 2026-04-20
 功能：
-  - 使用湖南电信DNS解析获取Cloudflare优选IP
+  - 使用固定优选IP池（中国用户实测延迟低）
+  - 每小时随机轮换IP，避免IP失效
   - 自动分配每个协议独立IP
-  - 每小时自动更新，保证IP最新
 """
 
 import os
@@ -37,8 +37,24 @@ except ImportError:
 
 logger = get_logger('cdn_monitor')
 
-# 湖南电信DNS服务器
-HUNAN_DNS = ['222.246.129.80', '59.51.78.210', '114.114.114.114']
+# 中国用户实测最快的Cloudflare IP池（50ms左右，按延时排序）
+# 来源：用户本地通过湖南电信DNS实测
+PREFERRED_IPS = [
+    '172.64.33.166',    # 46.06ms - 最快
+    '162.159.45.15',    # 51.39ms
+    '172.64.53.179',    # 51.98ms
+    '108.162.198.145',  # 52.01ms
+    '172.64.52.205',    # 52.41ms
+    '162.159.44.103',   # 52.51ms
+    '162.159.39.190',   # 52.68ms
+    '162.159.38.26',    # 53.14ms
+    '162.159.7.250',    # 53.83ms
+    '104.18.37.65',     # 53.78ms
+    '172.67.178.214',   # 备用
+    '104.21.35.190',    # 备用
+    '104.16.123.96',    # 备用
+    '104.16.124.96',    # 备用
+]
 
 CDN_TOP_IPS_COUNT = 5
 MONITOR_INTERVAL = 3600
@@ -58,36 +74,6 @@ def init_db():
     conn.close()
     return os.path.join(DATA_DIR, 'singbox.db')
 
-def resolve_via_dns():
-    """通过湖南电信DNS解析CF域名获取IP"""
-    cf_domains = [
-        'jp.290372913.xyz',
-        'cf.290372913.xyz',
-        'cdn.290372913.xyz',
-    ]
-    
-    all_ips = []
-    for dns_server in HUNAN_DNS:
-        for domain in cf_domains:
-            try:
-                result = subprocess.run(
-                    ['dig', '+short', domain, f'@{dns_server}'],
-                    capture_output=True, text=True, timeout=5
-                )
-                if result.stdout.strip():
-                    for line in result.stdout.strip().split('\n'):
-                        ip = line.strip()
-                        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-                            if ip not in all_ips:
-                                all_ips.append(ip)
-            except:
-                continue
-        
-        if all_ips:
-            break
-    
-    return all_ips
-
 def ping_ip(ip, timeout=3):
     """ping测试IP是否可达"""
     try:
@@ -100,29 +86,27 @@ def ping_ip(ip, timeout=3):
         return False
 
 def fetch_cdn_ips():
-    """获取优选IP（通过湖南电信DNS实时解析）"""
-    logger.info(f">>> 使用湖南电信DNS实时解析获取优选IP")
+    """获取优选IP（从固定IP池随机选择并验证）"""
+    logger.info(f">>> 从固定优选IP池随机选择（中国用户实测最快）")
     
-    dns_ips = resolve_via_dns()
-    if dns_ips:
-        logger.info(f"[OK] DNS解析获取 {len(dns_ips)} 个IP: {dns_ips}")
-        
-        valid_ips = []
-        for ip in dns_ips:
-            if ping_ip(ip):
-                valid_ips.append(ip)
-                if len(valid_ips) >= CDN_TOP_IPS_COUNT:
-                    break
-        
-        if valid_ips:
-            logger.info(f"[OK] 验证通过 {len(valid_ips)} 个IP: {valid_ips}")
-            return valid_ips
-        else:
-            logger.warning("[WARN] 所有IP ping失败，返回原始DNS解析结果")
-            return dns_ips[:CDN_TOP_IPS_COUNT]
+    # 随机打乱IP池
+    shuffled_ips = PREFERRED_IPS.copy()
+    random.shuffle(shuffled_ips)
     
-    logger.error("[ERROR] DNS解析失败，无可用IP")
-    return []
+    # 验证IP是否可达
+    valid_ips = []
+    for ip in shuffled_ips:
+        if ping_ip(ip):
+            valid_ips.append(ip)
+            if len(valid_ips) >= CDN_TOP_IPS_COUNT:
+                break
+    
+    if valid_ips:
+        logger.info(f"[OK] 验证通过 {len(valid_ips)} 个IP: {valid_ips}")
+        return valid_ips
+    else:
+        logger.warning("[WARN] 所有IP ping失败，返回前5个IP")
+        return PREFERRED_IPS[:CDN_TOP_IPS_COUNT]
 
 def assign_and_save_ips(ips):
     """分配并保存优选IP（每个协议独立IP）"""
